@@ -19,7 +19,7 @@ genai.configure(api_key=api_key)
 
 # Build vectorstore from a given DataFrame
 def build_retriever(df):
-    model_name = "all-MiniLM-L6-v2"
+    model_name = "sentence-transformers/paraphrase-albert-small-v2"
     embedder = HuggingFaceEmbeddings(model_name=model_name)
 
     df["doc"] = df.apply(
