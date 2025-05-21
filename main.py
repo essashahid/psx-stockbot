@@ -5,19 +5,28 @@ import numpy as np
 import faiss
 from dotenv import load_dotenv
 import google.generativeai as genai
+import streamlit as st
 from sentence_transformers import SentenceTransformer
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
 print("🔧 main.py loaded")
 
-# Load API key
+# Load Gemini API key
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=api_key)
 
-# Load your data
-df = pd.read_csv("psx_master_complete.csv", parse_dates=["Date"])
+# 🔄 Upload CSV file via Streamlit
+uploaded_file = st.file_uploader("📄 Upload your PSX data CSV", type=["csv"])
+if not uploaded_file:
+    st.warning("Please upload your `psx_master_complete.csv` to continue.")
+    st.stop()
+
+# Load the uploaded CSV
+df = pd.read_csv(uploaded_file, parse_dates=["Date"])
+
+# Prepare document text from rows
 df["doc"] = df.apply(
     lambda r: f"On {r.Date.date()}, {r.Symbol} ({r.Company}) opened at {r.Open}, high {r.High}, low {r.Low}, closed at {r.Close}, volume was {r.Volume}.",
     axis=1,
@@ -38,6 +47,7 @@ vectorstore = LangFAISS(embedding_function=embedder, index=faiss_index, document
 retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
 
+# Gemini-powered question answering
 def ask_bot(query: str) -> str:
     print(f"🔍 ask_bot received query: {query}")
     docs = retriever.get_relevant_documents(query)
