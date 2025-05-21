@@ -3,7 +3,6 @@ import os
 import pandas as pd
 import numpy as np
 import faiss
-import streamlit as st
 from dotenv import load_dotenv
 import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
@@ -18,9 +17,8 @@ api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=api_key)
 
 
-# Global cache for embedding setup
-@st.cache_resource(show_spinner="Indexing dataset...")
-def load_vectorstore(df):
+# Build vectorstore from a given DataFrame
+def build_retriever(df):
     model_name = "all-MiniLM-L6-v2"
     embedder = HuggingFaceEmbeddings(model_name=model_name)
 
@@ -42,19 +40,8 @@ def load_vectorstore(df):
     return vectorstore.as_retriever(search_kwargs={"k": 5})
 
 
-# Load CSV (this stays at top)
-uploaded_file = st.file_uploader("📄 Upload your PSX data CSV", type=["csv"])
-retriever = None
-
-if uploaded_file:
-    df = pd.read_csv(uploaded_file, parse_dates=["Date"])
-    retriever = load_vectorstore(df)
-
-
-def ask_bot(query: str) -> str:
-    if not retriever:
-        return "Please upload a CSV file first."
-    print(f"🔍 ask_bot received query: {query}")
+# Gemini-powered QA
+def ask_bot(query: str, retriever) -> str:
     docs = retriever.get_relevant_documents(query)
     context = "\n".join([doc.page_content for doc in docs])
 
@@ -63,7 +50,7 @@ def ask_bot(query: str) -> str:
         f"Here are some historical records:\n{context}\n\n"
         f"Answer the user’s question:\n{query}"
     )
+
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
-    print("✔️  Gemini responded")
     return response.text
