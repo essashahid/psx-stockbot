@@ -42,8 +42,10 @@ def build_retriever(df):
 
 # Gemini-powered QA
 def ask_bot(query: str, retriever) -> str:
+    print(f"🔍 ask_bot received query: {query}")
     docs = retriever.get_relevant_documents(query)
     context = "\n".join([doc.page_content for doc in docs])
+    print("🧠 Context ready, calling Gemini...")
 
     prompt = (
         f"You are a helpful stock market assistant.\n\n"
@@ -53,4 +55,6 @@ def ask_bot(query: str, retriever) -> str:
 
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
+
+    print("✔️ Gemini responded")
     return response.text
