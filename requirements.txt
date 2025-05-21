@@ -1,0 +1,9 @@
+pandas
+numpy
+faiss-cpu
+streamlit
+sentence-transformers
+langchain
+langchain-community
+python-dotenv
+google-generativeai
