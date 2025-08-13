@@ -482,17 +482,27 @@ def rule_based_symbol_performance(query: str, df: pd.DataFrame) -> str:
     if not syms:
         return ""
     sym = syms[0]
-    narrative = summarize_symbol_narrative(df, sym)
+    start, end = _maybe_extract_dates(query)
+    narrative = summarize_symbol_narrative(df, sym, start, end)
     if narrative:
         return narrative
     table = _summarize_symbol(df, sym)
     return table or ""
 
 
-def summarize_symbol_narrative(df: pd.DataFrame, symbol: str) -> Optional[str]:
+def summarize_symbol_narrative(
+    df: pd.DataFrame,
+    symbol: str,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+) -> Optional[str]:
     if df is None or df.empty:
         return None
     sdf = df[df["Symbol"].astype(str).str.upper() == symbol.upper()].sort_values("Date")
+    if start is not None:
+        sdf = sdf[sdf["Date"] >= start]
+    if end is not None:
+        sdf = sdf[sdf["Date"] <= end]
     if sdf.empty:
         return None
     start = sdf.iloc[0]
@@ -515,10 +525,19 @@ def summarize_symbol_narrative(df: pd.DataFrame, symbol: str) -> Optional[str]:
     )
 
 
-def compose_symbol_facts(df: pd.DataFrame, symbol: str) -> Optional[str]:
+def compose_symbol_facts(
+    df: pd.DataFrame,
+    symbol: str,
+    start: Optional[pd.Timestamp] = None,
+    end: Optional[pd.Timestamp] = None,
+) -> Optional[str]:
     if df is None or df.empty:
         return None
     sdf = df[df["Symbol"].astype(str).str.upper() == symbol.upper()].sort_values("Date")
+    if start is not None:
+        sdf = sdf[sdf["Date"] >= start]
+    if end is not None:
+        sdf = sdf[sdf["Date"] <= end]
     if sdf.empty:
         return None
     start = sdf.iloc[0]
@@ -552,7 +571,8 @@ def ask_or_compute(query: str, retriever, df: Optional[pd.DataFrame]) -> str:  #
             known_symbols = sorted(df["Symbol"].dropna().astype(str).str.upper().unique().tolist())
             syms = _maybe_extract_symbols(query, known_symbols)
             if syms:
-                facts = compose_symbol_facts(df, syms[0])
+                _start, _end = _maybe_extract_dates(query)
+                facts = compose_symbol_facts(df, syms[0], _start, _end)
                 if facts:
                     return ask_bot_with_facts(query, retriever, facts)
     # Then try other deterministic rules
@@ -578,25 +598,31 @@ def _maybe_extract_symbols(text: str, known_symbols: Optional[List[str]]) -> Lis
 
 
 def _maybe_extract_dates(text: str) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
-    # Very lightweight date extractor: YYYY, YYYY-MM, or YYYY-MM-DD
-    date_patterns = [
-        r"(20\d{2}-\d{2}-\d{2})",
-        r"(20\d{2}-\d{2})",
-        r"(20\d{2})",
-    ]
-    found: List[pd.Timestamp] = []
-    for pat in date_patterns:
-        for m in re.findall(pat, text):
-            try:
-                found.append(pd.to_datetime(m))
-            except Exception:
-                pass
-    if not found:
-        return None, None
-    found.sort()
-    if len(found) == 1:
-        return found[0], None
-    return found[0], found[-1]
+    """Extract date range from text.
+
+    - YYYY-MM-DD → single day
+    - YYYY-MM → whole month
+    - YYYY → whole year
+    - Multiple matches collapse to [min, max]
+    """
+    # Full dates
+    full = [pd.to_datetime(x) for x in re.findall(r"(20\d{2}-\d{2}-\d{2})", text)]
+    if full:
+        full.sort()
+        return full[0], full[-1]
+    # Year-month
+    ym = re.findall(r"(20\d{2}-\d{2})", text)
+    if ym:
+        dt = pd.to_datetime(ym[0] + "-01")
+        start = dt.normalize()
+        end = (start + pd.offsets.MonthEnd(1)).normalize()
+        return start, end
+    # Year
+    y = re.findall(r"(?<!\d)(20\d{2})(?!\d)", text)
+    if y:
+        yr = int(y[0])
+        return pd.Timestamp(year=yr, month=1, day=1), pd.Timestamp(year=yr, month=12, day=31)
+    return None, None
 
 
 def parse_query_for_chart(query: str, known_symbols: Optional[List[str]]) -> Dict:
