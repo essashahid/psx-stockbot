@@ -5,7 +5,7 @@ from io import BytesIO
 from main import (
     load_psx_csv,
     build_retriever,
-    ask_bot,
+    ask_or_compute,
     generate_chart_from_query,
     top_movers,
 )
@@ -87,7 +87,7 @@ with tab1:
             st.warning("Please upload a CSV first.")
         else:
             with st.spinner("Thinking..."):
-                answer = ask_bot(query, retriever)
+                answer = ask_or_compute(query, retriever, df)
             st.markdown("### 📊 Answer")
             st.write(answer)
 

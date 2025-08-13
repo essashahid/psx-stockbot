@@ -155,7 +155,14 @@ def ask_bot(query: str, retriever) -> str:
             "Gemini API key not configured. Set GEMINI_API_KEY in your environment to enable answers."
         )
 
-    docs = retriever.get_relevant_documents(query) if retriever else []
+    # LangChain retrievers are Runnable in newer versions; prefer invoke
+    docs = []
+    if retriever:
+        try:
+            docs = retriever.invoke(query)
+        except Exception:
+            # Back-compat
+            docs = retriever.get_relevant_documents(query)
     context = "\n".join([getattr(doc, "page_content", str(doc)) for doc in docs])
 
     system = (
@@ -172,6 +179,53 @@ def ask_bot(query: str, retriever) -> str:
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
     return response.text or "No answer generated."
+
+
+def _format_markdown_table(rows: List[Dict[str, str]], headers: List[str]) -> str:
+    if not rows:
+        return ""
+    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
+    for r in rows:
+        lines.append("| " + " | ".join(str(r.get(h, "")) for h in headers) + " |")
+    return "\n" + "\n".join(lines)
+
+
+def rule_based_answer(query: str, df: pd.DataFrame, top_n: int = 10) -> str:
+    """Deterministic answers for common analytics questions.
+
+    Currently supports:
+      - Highest/Top volume on a specific date: e.g., "highest volume on 2019-12-30".
+    """
+    if df is None or df.empty:
+        return ""
+
+    q = query.lower()
+    date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", q)
+    asks_volume = any(k in q for k in ["highest volume", "top volume", "most volume", "max volume"])
+    if date_match and asks_volume:
+        when = pd.to_datetime(date_match.group(1))
+        day = df[df["Date"] == when]
+        if day.empty:
+            return f"No rows found for {when.date()} in the dataset."
+        day = day.sort_values("Volume", ascending=False).head(top_n)
+        rows = [
+            {
+                "Symbol": s,
+                "Company": c,
+                "Volume": f"{int(v):,}",
+            }
+            for s, c, v in zip(day["Symbol"], day.get("Company", ""), day["Volume"])
+        ]
+        table = _format_markdown_table(rows, ["Symbol", "Company", "Volume"])
+        return f"Top {len(day)} by Volume on {when.date()}:" + table
+    return ""
+
+
+def ask_or_compute(query: str, retriever, df: Optional[pd.DataFrame]) -> str:
+    deterministic = rule_based_answer(query, df if df is not None else pd.DataFrame())
+    if deterministic:
+        return deterministic
+    return ask_bot(query, retriever)
 
 
 # ---------- Query parsing and charts ----------
@@ -314,19 +368,16 @@ def generate_chart_from_query(query: str, df: pd.DataFrame) -> Tuple[Optional[go
 
 
 def top_movers(df: pd.DataFrame, date: pd.Timestamp, top_n: int = 10) -> pd.DataFrame:
-    day = df[df["Date"] == pd.to_datetime(date)]
+    if df.empty:
+        return df
+    # Compute previous close per symbol (previous trading day, not calendar day)
+    s = df.sort_values(["Symbol", "Date"]).copy()
+    s["PrevClose"] = s.groupby("Symbol")["Close"].shift(1)
+    day = s[s["Date"] == pd.to_datetime(date)].copy()
     if day.empty:
         return day
-    day = day.copy()
-    day.sort_values("Close", inplace=True)
-    # Use percentage change vs previous day where possible
-    prev_date = day["Date"].iloc[0] - pd.Timedelta(days=1)
-    prev = df[df["Date"] == prev_date][["Symbol", "Close"]].rename(
-        columns={"Close": "PrevClose"}
-    )
-    merged = day.merge(prev, on="Symbol", how="left")
-    merged["PctChange"] = (merged["Close"] - merged["PrevClose"]) / merged["PrevClose"] * 100
-    merged["PctChange"] = merged["PctChange"].replace([np.inf, -np.inf], np.nan)
-    merged = merged.sort_values("PctChange", ascending=False)
-    return merged.head(top_n)
+    day["PctChange"] = (day["Close"] - day["PrevClose"]) / day["PrevClose"] * 100
+    day["PctChange"] = day["PctChange"].replace([np.inf, -np.inf], np.nan)
+    day = day.sort_values(["PctChange", "Volume"], ascending=[False, False])
+    return day.head(top_n)
 
