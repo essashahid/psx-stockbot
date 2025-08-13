@@ -590,11 +590,32 @@ _CHART_KEYWORDS = ["chart", "plot", "line", "candlestick", "ohlc"]
 
 
 def _maybe_extract_symbols(text: str, known_symbols: Optional[List[str]]) -> List[str]:
+    """Extract symbols by whole-word matching to avoid false hits like 'ORM' in 'perform'.
+
+    Strategy:
+      - Tokenize the query into uppercase word tokens [A-Z0-9-]+.
+      - Return tokens that are in known_symbols, preserving order and uniqueness.
+      - If still none found, fall back to boundary-regex search per symbol (handles symbols with dots/hyphens).
+    """
     if not known_symbols:
         return []
     text_u = text.upper()
-    hits = [s for s in known_symbols if s in text_u]
-    return list(dict.fromkeys(hits))  # unique preserving order
+    tokens = re.findall(r"[A-Z0-9\-\.]+", text_u)
+    seen = set()
+    result: List[str] = []
+    kn = set(known_symbols)
+    for tok in tokens:
+        if tok in kn and tok not in seen:
+            seen.add(tok)
+            result.append(tok)
+    if result:
+        return result
+    # Fallback: boundary search for odd symbols
+    for s in known_symbols:
+        if re.search(rf"\b{re.escape(s)}\b", text_u) and s not in seen:
+            seen.add(s)
+            result.append(s)
+    return result
 
 
 def _maybe_extract_dates(text: str) -> Tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
