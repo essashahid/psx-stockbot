@@ -25,6 +25,10 @@ import duckdb
 import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
+try:
+    import torch  # type: ignore
+except Exception:  # pragma: no cover
+    torch = None
 
 
 # ---------- Environment / LLM configuration ----------
@@ -210,7 +214,19 @@ def build_retriever(
     if max_rows_for_index and len(df) > max_rows_for_index:
         df = df.sample(n=max_rows_for_index, random_state=42)
 
-    embedder = HuggingFaceEmbeddings(model_name=model_name)
+    # Prefer GPU (Apple MPS) when available for faster first-run embedding
+    device = "cpu"
+    try:
+        if torch is not None and torch.backends.mps.is_available():  # type: ignore[attr-defined]
+            device = "mps"
+    except Exception:
+        device = "cpu"
+
+    embedder = HuggingFaceEmbeddings(
+        model_name=model_name,
+        model_kwargs={"device": device},
+        encode_kwargs={"batch_size": 64},
+    )
     cache_key = _compute_retriever_cache_key(df, model_name, max_rows_for_index)
     cache_dir = Path("cache/indexes") / cache_key
     vs = _load_vectorstore_if_exists(embedder, cache_dir)
