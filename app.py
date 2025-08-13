@@ -7,6 +7,7 @@ from main import (
     ensure_duckdb_loaded,
     load_psx_via_duckdb,
     build_retriever,
+    build_retriever_with_progress,
     ask_or_compute,
     generate_chart_from_query,
     top_movers,
@@ -49,7 +50,16 @@ def _load_df_cached(file_bytes: bytes):
 
 @st.cache_resource(show_spinner=False)
 def _build_retriever_cached(df: pd.DataFrame, max_rows_for_index: int, k: int):
-    return build_retriever(df, max_rows_for_index=max_rows_for_index, k=k)
+    # Use a Streamlit progress bar if building from scratch
+    progress = st.progress(0.0, text="Preparing index…")
+
+    def cb(ratio: float, msg: str):
+        progress.progress(ratio, text=msg)
+
+    try:
+        return build_retriever_with_progress(df, max_rows_for_index=max_rows_for_index, k=k, progress_cb=cb)
+    finally:
+        progress.empty()
 
 
 df = None

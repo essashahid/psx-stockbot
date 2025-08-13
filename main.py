@@ -238,6 +238,62 @@ def build_retriever(
     return vectorstore.as_retriever(search_kwargs={"k": k})
 
 
+def build_retriever_with_progress(
+    df: pd.DataFrame,
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    max_rows_for_index: int = 20000,
+    k: int = 5,
+    progress_cb: Optional[callable] = None,
+):
+    if df.empty:
+        raise ValueError("DataFrame is empty; cannot build retriever")
+
+    if max_rows_for_index and len(df) > max_rows_for_index:
+        df = df.sample(n=max_rows_for_index, random_state=42)
+
+    # Reuse embedder config (GPU/MPS if available)
+    device = "cpu"
+    try:
+        if torch is not None and torch.backends.mps.is_available():  # type: ignore[attr-defined]
+            device = "mps"
+    except Exception:
+        device = "cpu"
+    embedder = HuggingFaceEmbeddings(
+        model_name=model_name,
+        model_kwargs={"device": device},
+        encode_kwargs={"batch_size": 64},
+    )
+
+    cache_key = _compute_retriever_cache_key(df, model_name, max_rows_for_index)
+    cache_dir = Path("cache/indexes") / cache_key
+    vs = _load_vectorstore_if_exists(embedder, cache_dir)
+    if vs is not None:
+        if progress_cb:
+            progress_cb(1.0, "Loaded cached index")
+        return vs.as_retriever(search_kwargs={"k": k})
+
+    # Build incrementally to allow UI progress updates
+    docs: List[str] = [_row_to_doc(row) for _, row in df.iterrows()]
+    total = len(docs)
+    batch_size = 1000
+    vs = None
+    for start in range(0, total, batch_size):
+        batch = docs[start : start + batch_size]
+        if start == 0:
+            vs = FAISS.from_texts(texts=batch, embedding=embedder)
+        else:
+            vs.add_texts(batch)
+        if progress_cb:
+            ratio = min(0.99, (start + len(batch)) / total)
+            progress_cb(ratio, f"Embedding batch {(start//batch_size)+1}/{(total+batch_size-1)//batch_size}")
+
+    assert vs is not None
+    _save_vectorstore(vs, cache_dir)
+    if progress_cb:
+        progress_cb(1.0, "Index built and cached")
+    return vs.as_retriever(search_kwargs={"k": k})
+
+
 # ---------- LLM QA ----------
 
 
