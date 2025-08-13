@@ -82,14 +82,14 @@ Required columns in CSV:
 flowchart LR
   A[CSV File] --> B[Load + Optimize dtypes]
   B --> C[Textify rows]
-  C --> D[Embeddings (Sentence-Transformers)]
+  C --> D[Embeddings (Sentence Transformers)]
   D --> E[FAISS Vector Store]
   E --> F[Retriever (k)]
   F --> G[LLM (Gemini 1.5 Flash)]
   G --> H[Grounded Answer]
 
   B --> I[Charts Pipeline]
-  I --> J[Parse Query → Filter → Plotly]
+  I --> J[Parse Query -> Filter -> Plotly]
   J --> K[Interactive Charts]
 ```
 
