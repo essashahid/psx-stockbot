@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -14,7 +15,26 @@ st.title("📈 PSX StockBot: PSX Chat, Charts, and Retrieval")
 st.caption("Upload PSX CSV and ask questions. Try: 'Chart KEL 2020-01 to 2020-03', 'Top movers 2019-12-30'")
 
 with st.sidebar:
-    uploaded_file = st.file_uploader("📄 Upload PSX data CSV", type=["csv"])
+    data_mode = st.radio("Data source", ["Upload", "Default CSV"], horizontal=True)
+    uploaded_file = None
+    default_path = os.path.join(os.path.dirname(__file__), "psx_master_complete.csv")
+    if data_mode == "Upload":
+        uploaded_file = st.file_uploader("📄 Upload PSX data CSV", type=["csv"])
+    else:
+        if os.path.exists(default_path):
+            st.success("Using repository CSV: psx_master_complete.csv")
+        else:
+            st.warning("Default CSV not found in repo. Switch to Upload.")
+
+    max_rows_for_index = st.slider(
+        "Rows to index for semantic search",
+        min_value=10000,
+        max_value=200000,
+        step=10000,
+        value=50000,
+        help="Sampling keeps memory usage stable on huge CSVs",
+    )
+    retriever_k = st.slider("Retriever depth (k)", 3, 20, 8)
     st.markdown(
         "- Expected columns: `Date, Symbol, Company, Open, High, Low, Close, Volume`\n"
         "- LLM answers require `GEMINI_API_KEY` in your environment."
@@ -26,20 +46,24 @@ def _load_df_cached(file_bytes: bytes):
 
 
 @st.cache_resource(show_spinner=False)
-def _build_retriever_cached(df: pd.DataFrame):
-    return build_retriever(df)
+def _build_retriever_cached(df: pd.DataFrame, max_rows_for_index: int, k: int):
+    return build_retriever(df, max_rows_for_index=max_rows_for_index, k=k)
 
 
 df = None
 retriever = None
-if uploaded_file is not None:
-    try:
+try:
+    if data_mode == "Upload" and uploaded_file is not None:
         file_bytes = uploaded_file.getvalue()
         df = _load_df_cached(file_bytes)
-        retriever = _build_retriever_cached(df)
+    elif data_mode == "Default CSV" and os.path.exists(default_path):
+        # Load directly from path (cached by content hash implicitly not available; acceptable)
+        df = load_psx_csv(default_path)
+    if df is not None:
+        retriever = _build_retriever_cached(df, max_rows_for_index, retriever_k)
         st.success(f"Loaded {len(df):,} rows · {df['Symbol'].nunique()} symbols")
-    except Exception as e:
-        st.error(f"Failed to load CSV: {e}")
+except Exception as e:
+    st.error(f"Failed to load CSV: {e}")
 
 tab1, tab2, tab3 = st.tabs(["Ask", "Chart", "Analytics"])
 
@@ -48,6 +72,16 @@ with tab1:
         "Ask a question",
         placeholder="E.g. Which stocks had the highest volume on 2019-12-30?",
     )
+    cols = st.columns(3)
+    if cols[0].button("Example: Highest volume 2019-12-30"):
+        query = "Which stocks had the highest volume on 2019-12-30?"
+        st.experimental_rerun()
+    if cols[1].button("Example: Avg close for KEL 2020"):
+        query = "What was the average close for KEL in 2020?"
+        st.experimental_rerun()
+    if cols[2].button("Example: Rising stocks 2018-06"):
+        query = "Which symbols were rising in 2018-06?"
+        st.experimental_rerun()
     if st.button("Answer", type="primary"):
         if df is None or retriever is None:
             st.warning("Please upload a CSV first.")
