@@ -297,9 +297,38 @@ def rule_based_symbol_performance(query: str, df: pd.DataFrame) -> str:
     syms = _maybe_extract_symbols(query, known_symbols)
     if not syms:
         return ""
-    # Only handle the first symbol for now
-    summary = _summarize_symbol(df, syms[0])
-    return summary or ""
+    sym = syms[0]
+    narrative = summarize_symbol_narrative(df, sym)
+    if narrative:
+        return narrative
+    table = _summarize_symbol(df, sym)
+    return table or ""
+
+
+def summarize_symbol_narrative(df: pd.DataFrame, symbol: str) -> Optional[str]:
+    if df is None or df.empty:
+        return None
+    sdf = df[df["Symbol"].astype(str).str.upper() == symbol.upper()].sort_values("Date")
+    if sdf.empty:
+        return None
+    start = sdf.iloc[0]
+    end = sdf.iloc[-1]
+    start_price = float(start["Close"])
+    end_price = float(end["Close"])
+    start_date = pd.to_datetime(start["Date"]).date()
+    end_date = pd.to_datetime(end["Date"]).date()
+    total_return_pct = (end_price - start_price) / start_price * 100 if start_price else None
+    high = float(sdf["Close"].max())
+    low = float(sdf["Close"].min())
+
+    dir_word = "increased" if total_return_pct is not None and total_return_pct >= 0 else "declined"
+    magnitude = f"about {abs(total_return_pct):.1f}%" if total_return_pct is not None else "over the observed period"
+
+    return (
+        f"From {start_date} to {end_date}, {symbol} {dir_word} by {magnitude}, "
+        f"moving from {start_price:.2f} to {end_price:.2f}. Over this span, it traded as high as {high:.2f} "
+        f"and as low as {low:.2f}."
+    )
 
 
 def ask_or_compute(query: str, retriever, df: Optional[pd.DataFrame]) -> str:  # type: ignore[no-redef]
