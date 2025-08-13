@@ -127,9 +127,9 @@ def _row_to_doc(row: pd.Series) -> str:
 
 def build_retriever(
     df: pd.DataFrame,
-    model_name: str = "sentence-transformers/paraphrase-albert-small-v2",
-    max_rows_for_index: int = 50000,
-    k: int = 8,
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    max_rows_for_index: int = 20000,
+    k: int = 5,
 ):
     if df.empty:
         raise ValueError("DataFrame is empty; cannot build retriever")
@@ -177,7 +177,42 @@ def ask_bot(query: str, retriever) -> str:
     )
 
     model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(prompt)
+    response = model.generate_content(
+        prompt,
+        generation_config={"max_output_tokens": 256}
+    )
+    return response.text or "No answer generated."
+
+
+def ask_bot_with_facts(query: str, retriever, facts_text: str) -> str:
+    api_key = _ensure_gemini_configured()
+    if not api_key:
+        return (
+            "Gemini API key not configured. Set GEMINI_API_KEY in your environment to enable answers."
+        )
+
+    docs = []
+    if retriever:
+        try:
+            docs = retriever.invoke(query)
+        except Exception:
+            docs = retriever.get_relevant_documents(query)
+    context = "\n".join([getattr(doc, "page_content", str(doc)) for doc in docs])
+
+    system = (
+        "You are PSX StockBot, a precise and concise financial assistant. "
+        "Use the provided FACTS as the authoritative data. You may use CONTEXT for color, "
+        "but do not contradict the FACTS. Answer in natural language for a general audience."
+    )
+    prompt = (
+        f"{system}\n\nFACTS:\n{facts_text}\n\nCONTEXT:\n{context}\n\nQuestion:\n{query}\n\n"
+        "Write a 2-4 sentence summary in clear, confident tone."
+    )
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(
+        prompt,
+        generation_config={"max_output_tokens": 200}
+    )
     return response.text or "No answer generated."
 
 
@@ -331,11 +366,46 @@ def summarize_symbol_narrative(df: pd.DataFrame, symbol: str) -> Optional[str]:
     )
 
 
+def compose_symbol_facts(df: pd.DataFrame, symbol: str) -> Optional[str]:
+    if df is None or df.empty:
+        return None
+    sdf = df[df["Symbol"].astype(str).str.upper() == symbol.upper()].sort_values("Date")
+    if sdf.empty:
+        return None
+    start = sdf.iloc[0]
+    end = sdf.iloc[-1]
+    start_price = float(start["Close"])
+    end_price = float(end["Close"])
+    start_date = pd.to_datetime(start["Date"]).date()
+    end_date = pd.to_datetime(end["Date"]).date()
+    total_return_pct = (end_price - start_price) / start_price * 100 if start_price else None
+    high = float(sdf["Close"].max())
+    low = float(sdf["Close"].min())
+    avg_vol = float(sdf["Volume"].mean()) if "Volume" in sdf.columns else None
+    return (
+        f"Symbol: {symbol}\n"
+        f"DateRange: {start_date} -> {end_date}\n"
+        f"StartClose: {start_price:.2f}\n"
+        f"EndClose: {end_price:.2f}\n"
+        f"TotalReturnPct: {total_return_pct:.2f}\n"
+        f"High: {high:.2f}\n"
+        f"Low: {low:.2f}\n"
+        f"AvgVolume: {int(avg_vol) if avg_vol is not None else 'NA'}\n"
+        f"TradingDays: {len(sdf)}"
+    )
+
+
 def ask_or_compute(query: str, retriever, df: Optional[pd.DataFrame]) -> str:  # type: ignore[no-redef]
-    # Try performance summary first for queries like "How has MEBL performed so far?"
-    perf = rule_based_symbol_performance(query, df if df is not None else pd.DataFrame())
-    if perf:
-        return perf
+    # Prefer natural language from LLM; pass concise facts when we detect a symbol performance ask
+    if df is not None and not df.empty:
+        q = query.lower()
+        if any(k in q for k in ["perform", "performance", "so far", "how has", "trend"]):
+            known_symbols = sorted(df["Symbol"].dropna().astype(str).str.upper().unique().tolist())
+            syms = _maybe_extract_symbols(query, known_symbols)
+            if syms:
+                facts = compose_symbol_facts(df, syms[0])
+                if facts:
+                    return ask_bot_with_facts(query, retriever, facts)
     # Then try other deterministic rules
     deterministic = rule_based_answer(query, df if df is not None else pd.DataFrame())
     if deterministic:
