@@ -96,10 +96,9 @@ with tab1:
         if df is None or retriever is None:
             st.warning("Please upload a CSV first.")
         else:
-            with st.status("Sending to PSX StockBot...", expanded=True) as status:
-                status.update(label="Retrieving data and composing answer...", state="running")
+            st.toast("Processing your question…", icon="🤖")
+            with st.spinner("Retrieving data and composing answer…"):
                 answer = ask_or_compute(query, retriever, df)
-                status.update(label="Answer ready", state="complete")
             st.markdown("### 📊 Answer")
             st.write(answer)
 
