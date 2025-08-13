@@ -228,6 +228,93 @@ def ask_or_compute(query: str, retriever, df: Optional[pd.DataFrame]) -> str:
     return ask_bot(query, retriever)
 
 
+# ---------- Symbol performance summary rule ----------
+
+
+def _format_pct(x: Optional[float]) -> str:
+    if x is None or pd.isna(x):
+        return "—"
+    return f"{x:.2f}%"
+
+
+def _format_num(x: Optional[float]) -> str:
+    if x is None or pd.isna(x):
+        return "—"
+    if abs(x) >= 1000:
+        return f"{x:,.2f}"
+    return f"{x:.2f}"
+
+
+def _summarize_symbol(df: pd.DataFrame, symbol: str) -> Optional[str]:
+    if df is None or df.empty:
+        return None
+    sdf = df[df["Symbol"].astype(str).str.upper() == symbol.upper()].sort_values("Date")
+    if sdf.empty:
+        return None
+    start_row = sdf.iloc[0]
+    end_row = sdf.iloc[-1]
+    start_price = float(start_row["Close"])
+    end_price = float(end_row["Close"])
+    start_date = pd.to_datetime(start_row["Date"]).date()
+    end_date = pd.to_datetime(end_row["Date"]).date()
+    days = (pd.to_datetime(end_row["Date"]) - pd.to_datetime(start_row["Date"])) .days
+    total_return_pct = (end_price - start_price) / start_price * 100 if start_price else None
+    cagr_pct = None
+    if days and days > 0 and start_price > 0:
+        years = days / 365.0
+        cagr_pct = (pow(end_price / start_price, 1.0 / years) - 1.0) * 100 if end_price > 0 else None
+    high_idx = sdf["Close"].idxmax()
+    low_idx = sdf["Close"].idxmin()
+    high = float(sdf.loc[high_idx, "Close"]) if pd.notna(high_idx) else None
+    low = float(sdf.loc[low_idx, "Close"]) if pd.notna(low_idx) else None
+    high_date = pd.to_datetime(sdf.loc[high_idx, "Date"]).date() if pd.notna(high_idx) else None
+    low_date = pd.to_datetime(sdf.loc[low_idx, "Date"]).date() if pd.notna(low_idx) else None
+    avg_vol = float(sdf["Volume"].mean()) if "Volume" in sdf.columns else None
+
+    lines: List[str] = []
+    lines.append(f"Performance summary for {symbol} ({start_date} → {end_date})")
+    rows = [
+        {"Metric": "Start Close", "Value": _format_num(start_price)},
+        {"Metric": "End Close", "Value": _format_num(end_price)},
+        {"Metric": "Total Return", "Value": _format_pct(total_return_pct)},
+        {"Metric": "CAGR (approx)", "Value": _format_pct(cagr_pct)},
+        {"Metric": "High (date)", "Value": f"{_format_num(high)} ({high_date})" if high is not None else "—"},
+        {"Metric": "Low (date)", "Value": f"{_format_num(low)} ({low_date})" if low is not None else "—"},
+        {"Metric": "Avg Volume", "Value": f"{int(avg_vol):,}" if avg_vol is not None else "—"},
+        {"Metric": "Trading days", "Value": f"{len(sdf):,}"},
+    ]
+    lines.append(_format_markdown_table(rows, ["Metric", "Value"]))
+    return "\n".join(lines)
+
+
+def rule_based_symbol_performance(query: str, df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return ""
+    q = query.lower()
+    if not any(k in q for k in ["perform", "performance", "so far", "how has", "trend"]):
+        return ""
+    known_symbols = sorted(df["Symbol"].dropna().astype(str).str.upper().unique().tolist())
+    syms = _maybe_extract_symbols(query, known_symbols)
+    if not syms:
+        return ""
+    # Only handle the first symbol for now
+    summary = _summarize_symbol(df, syms[0])
+    return summary or ""
+
+
+def ask_or_compute(query: str, retriever, df: Optional[pd.DataFrame]) -> str:  # type: ignore[no-redef]
+    # Try performance summary first for queries like "How has MEBL performed so far?"
+    perf = rule_based_symbol_performance(query, df if df is not None else pd.DataFrame())
+    if perf:
+        return perf
+    # Then try other deterministic rules
+    deterministic = rule_based_answer(query, df if df is not None else pd.DataFrame())
+    if deterministic:
+        return deterministic
+    # Fallback to LLM
+    return ask_bot(query, retriever)
+
+
 # ---------- Query parsing and charts ----------
 
 
