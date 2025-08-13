@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+import hashlib
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -169,6 +171,32 @@ def _row_to_doc(row: pd.Series) -> str:
     return ", ".join(parts) + "."
 
 
+def _compute_retriever_cache_key(df: pd.DataFrame, model_name: str, max_rows_for_index: int) -> str:
+    try:
+        min_date = str(pd.to_datetime(df["Date"]).min().date()) if "Date" in df.columns else ""
+        max_date = str(pd.to_datetime(df["Date"]).max().date()) if "Date" in df.columns else ""
+    except Exception:
+        min_date = max_date = ""
+    head_sig = df[["Symbol", "Date"]].astype(str).head(1000).to_csv(index=False) if set(["Symbol","Date"]).issubset(df.columns) else str(df.head(100))
+    digest = hashlib.sha1(head_sig.encode()).hexdigest()[:12]
+    key = f"{model_name.split('/')[-1]}_{len(df)}_{df['Symbol'].nunique() if 'Symbol' in df.columns else 0}_{min_date}_{max_date}_{max_rows_for_index}_{digest}"
+    return key
+
+
+def _save_vectorstore(vectorstore: FAISS, cache_dir: Path) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    vectorstore.save_local(str(cache_dir))
+
+
+def _load_vectorstore_if_exists(embedder: HuggingFaceEmbeddings, cache_dir: Path) -> Optional[FAISS]:
+    if not cache_dir.exists():
+        return None
+    try:
+        return FAISS.load_local(str(cache_dir), embedder, allow_dangerous_deserialization=True)
+    except Exception:
+        return None
+
+
 def build_retriever(
     df: pd.DataFrame,
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
@@ -182,10 +210,15 @@ def build_retriever(
     if max_rows_for_index and len(df) > max_rows_for_index:
         df = df.sample(n=max_rows_for_index, random_state=42)
 
-    docs: List[str] = [_row_to_doc(row) for _, row in df.iterrows()]
-
     embedder = HuggingFaceEmbeddings(model_name=model_name)
-    vectorstore = FAISS.from_texts(texts=docs, embedding=embedder)
+    cache_key = _compute_retriever_cache_key(df, model_name, max_rows_for_index)
+    cache_dir = Path("cache/indexes") / cache_key
+    vs = _load_vectorstore_if_exists(embedder, cache_dir)
+    if vs is None:
+        docs: List[str] = [_row_to_doc(row) for _, row in df.iterrows()]
+        vs = FAISS.from_texts(texts=docs, embedding=embedder)
+        _save_vectorstore(vs, cache_dir)
+    vectorstore = vs
     return vectorstore.as_retriever(search_kwargs={"k": k})
 
 
