@@ -68,10 +68,16 @@ except Exception as e:
 tab1, tab2, tab3 = st.tabs(["Ask", "Chart", "Analytics"])
 
 with tab1:
-    query = st.text_input(
-        "Ask a question",
-        placeholder="E.g. Which stocks had the highest volume on 2019-12-30?",
-    )
+    q_col, b_col = st.columns([4, 1])
+    with q_col:
+        query = st.text_input(
+            "Ask a question",
+            placeholder="E.g. Which stocks had the highest volume on 2019-12-30?",
+            key="ask_query",
+        )
+    with b_col:
+        ask_clicked = st.button("Ask", type="primary")
+
     cols = st.columns(3)
     if cols[0].button("Example: Highest volume 2019-12-30"):
         query = "Which stocks had the highest volume on 2019-12-30?"
@@ -82,12 +88,14 @@ with tab1:
     if cols[2].button("Example: Rising stocks 2018-06"):
         query = "Which symbols were rising in 2018-06?"
         st.rerun()
-    if st.button("Answer", type="primary"):
+    if ask_clicked:
         if df is None or retriever is None:
             st.warning("Please upload a CSV first.")
         else:
-            with st.spinner("Thinking..."):
+            with st.status("Sending to PSX StockBot...", expanded=True) as status:
+                status.update(label="Retrieving data and composing answer...", state="running")
                 answer = ask_or_compute(query, retriever, df)
+                status.update(label="Answer ready", state="complete")
             st.markdown("### 📊 Answer")
             st.write(answer)
 
