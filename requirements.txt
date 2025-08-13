@@ -8,4 +8,5 @@ langchain-community
 python-dotenv
 google-generativeai
 langchain-huggingface
+ plotly
 
