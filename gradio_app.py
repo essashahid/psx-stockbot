@@ -1,7 +1,6 @@
 import os
 import tempfile
 import pandas as pd
-import plotly.io as pio
 import gradio as gr
 from main import (
     load_psx_csv,
@@ -35,10 +34,15 @@ def init_data(mode: str):
 
 
 def on_chat(message, history):
+    # history is a list of dicts when type="messages"
+    if history is None:
+        history = []
     if _DF is None or _RETR is None:
-        return history + [[message, "Please load data first (left panel)."]]
+        history += [{"role": "user", "content": message}, {"role": "assistant", "content": "Please load data first (left panel)."}]
+        return history
     answer = ask_or_compute(message, _RETR, _DF)
-    return history + [[message, answer]]
+    history += [{"role": "user", "content": message}, {"role": "assistant", "content": answer}]
+    return history
 
 
 def on_chart(query):
@@ -47,10 +51,8 @@ def on_chart(query):
     fig, caption = generate_chart_from_query(query, _DF)
     if fig is None:
         return None, caption
-    # Export to temp image for Gradio display
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        pio.write_image(fig, tmp.name, width=1000, height=500, scale=2)
-        return tmp.name, caption
+    # Return Plotly figure directly for Gradio Plot component (no kaleido required)
+    return fig, caption
 
 
 def on_top_movers(date_str):
@@ -74,7 +76,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             load_btn = gr.Button("Load data", variant="primary")
             load_out = gr.Markdown()
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot(height=300)
+            chatbot = gr.Chatbot(type="messages", height=300)
             msg = gr.Textbox(label="Ask a question")
             ask = gr.Button("Ask", variant="primary")
             ask.click(on_chat, inputs=[msg, chatbot], outputs=chatbot)
@@ -82,7 +84,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             gr.Markdown("## Chart")
             chart_q = gr.Textbox(label="Chart query", placeholder="plot KEL 2020-01 to 2020-03 as candlestick")
             render = gr.Button("Render Chart")
-            img = gr.Image(type="filepath")
+            img = gr.Plot()
             cap = gr.Markdown()
             render.click(on_chart, inputs=chart_q, outputs=[img, cap])
             gr.Markdown("## Top movers")
