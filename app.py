@@ -75,13 +75,13 @@ with tab1:
     cols = st.columns(3)
     if cols[0].button("Example: Highest volume 2019-12-30"):
         query = "Which stocks had the highest volume on 2019-12-30?"
-        st.experimental_rerun()
+        st.rerun()
     if cols[1].button("Example: Avg close for KEL 2020"):
         query = "What was the average close for KEL in 2020?"
-        st.experimental_rerun()
+        st.rerun()
     if cols[2].button("Example: Rising stocks 2018-06"):
         query = "Which symbols were rising in 2018-06?"
-        st.experimental_rerun()
+        st.rerun()
     if st.button("Answer", type="primary"):
         if df is None or retriever is None:
             st.warning("Please upload a CSV first.")
