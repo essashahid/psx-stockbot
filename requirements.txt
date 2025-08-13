@@ -10,4 +10,5 @@ google-generativeai
 langchain-huggingface
  plotly
  duckdb
+ gradio
 
