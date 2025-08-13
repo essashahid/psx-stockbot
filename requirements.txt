@@ -9,4 +9,5 @@ python-dotenv
 google-generativeai
 langchain-huggingface
  plotly
+ duckdb
 

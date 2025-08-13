@@ -4,6 +4,8 @@ import pandas as pd
 from io import BytesIO
 from main import (
     load_psx_csv,
+    ensure_duckdb_loaded,
+    load_psx_via_duckdb,
     build_retriever,
     ask_or_compute,
     generate_chart_from_query,
@@ -15,7 +17,7 @@ st.title("📈 PSX StockBot: PSX Chat, Charts, and Retrieval")
 st.caption("Upload PSX CSV and ask questions. Try: 'Chart KEL 2020-01 to 2020-03', 'Top movers 2019-12-30'")
 
 with st.sidebar:
-    data_mode = st.radio("Data source", ["Upload", "Default CSV"], horizontal=True)
+    data_mode = st.radio("Data source", ["Upload", "Default CSV", "DuckDB (fast)"], horizontal=True)
     uploaded_file = None
     default_path = os.path.join(os.path.dirname(__file__), "psx_master_complete.csv")
     if data_mode == "Upload":
@@ -57,13 +59,15 @@ try:
         file_bytes = uploaded_file.getvalue()
         df = _load_df_cached(file_bytes)
     elif data_mode == "Default CSV" and os.path.exists(default_path):
-        # Load directly from path (cached by content hash implicitly not available; acceptable)
         df = load_psx_csv(default_path)
+    elif data_mode == "DuckDB (fast)" and os.path.exists(default_path):
+        db_path = ensure_duckdb_loaded(default_path)
+        df = load_psx_via_duckdb(db_path)
     if df is not None:
         retriever = _build_retriever_cached(df, max_rows_for_index, retriever_k)
         st.success(f"Loaded {len(df):,} rows · {df['Symbol'].nunique()} symbols")
 except Exception as e:
-    st.error(f"Failed to load CSV: {e}")
+    st.error(f"Failed to load data: {e}")
 
 tab1, tab2, tab3 = st.tabs(["Ask", "Chart", "Analytics"])
 

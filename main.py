@@ -18,6 +18,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import load_dotenv
+import duckdb
 
 import google.generativeai as genai
 from langchain_community.vectorstores import FAISS
@@ -88,6 +89,49 @@ def load_psx_csv(path_or_buffer) -> pd.DataFrame:
         df = path_or_buffer
     else:
         df = pd.read_csv(path_or_buffer)
+    return _optimize_dtypes(df)
+
+
+# ---------- DuckDB accelerated path ----------
+
+
+def ensure_duckdb_loaded(csv_path: str, db_path: str = "cache/psx.duckdb") -> str:
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    con = duckdb.connect(db_path)
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS psx AS SELECT * FROM read_csv_auto(?, HEADER=TRUE);
+        """,
+        [csv_path],
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_psx_symbol_date ON psx(Symbol, Date);")
+    con.close()
+    return db_path
+
+
+def load_psx_via_duckdb(
+    db_path: str,
+    symbols: Optional[List[str]] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    con = duckdb.connect(db_path)
+    wheres = []
+    params: List = []
+    if symbols:
+        placeholders = ",".join(["?"] * len(symbols))
+        wheres.append(f"Symbol IN ({placeholders})")
+        params.extend([s.upper() for s in symbols])
+    if start:
+        wheres.append("Date >= ?")
+        params.append(start)
+    if end:
+        wheres.append("Date <= ?")
+        params.append(end)
+    where_sql = (" WHERE " + " AND ".join(wheres)) if wheres else ""
+    sql = f"SELECT Date, Symbol, Company, Open, High, Low, Close, Volume FROM psx{where_sql} ORDER BY Symbol, Date"
+    df = con.execute(sql, params).df()
+    con.close()
     return _optimize_dtypes(df)
 
 
